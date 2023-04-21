@@ -16,6 +16,7 @@ int myPow(int base, int power){
     return result;
 }
 
+//generowanie kombinacji doku - przyjrzec się ifom zeby mocniej obciac
 struct Subset generateSubsets(int n, int subset_size) {
     int *subset = (int *) malloc(subset_size * sizeof(int));
     for (int i = 0; i < subset_size; i++) { //CUDA
@@ -71,13 +72,14 @@ int TSP(int n, int dist[n][n], int path[n])
 {
     int C[myPow(2, n) - 1][n][2];
 
-    for(int i=1; i<n; i++) { //CUDA
+    for(int i=1; i<n; i++) { //CUDA - sprobowac
         C[1<<i][i][0] = dist[0][i];
         C[1<<i][i][1] = 0;
     }
 
 
     for(int subsetSize=2; subsetSize<n; subsetSize++){
+        //jednoczesnie generowac kombinacje i sprawdzac wartosci dla nich. Pan mowil o przesylaniu kombinacji paczkami
         struct Subset rootSubset = generateSubsets(n-1, subsetSize);
         struct Subset *subset = &rootSubset;
         while (subset->next){
