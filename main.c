@@ -86,7 +86,7 @@ int TSP(int n, int dist[n][n], int path[n])
                 bits |= 1 << subset->value[i];
             }
 
-            for(int k=0; k<subsetSize; k++) { //chyba tu bez zrownoleglenia
+            for(int k=0; k<subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
                 int prev = bits & ~(1 << subset->value[k]);
 
                 int res[2] = {-1,-1};
@@ -121,7 +121,7 @@ int TSP(int n, int dist[n][n], int path[n])
         }
     }
 
-    for(int i=n-1; i>0; i--) {
+    for(int i=n-1; i>0; i--) { // tu bez zrownoleglenia, bo musi byc po kolei
         path[i] = parent;
         int new_bits = bits & ~(1 << parent);
         parent = C[bits][parent][1];
