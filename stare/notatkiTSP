@@ -1,0 +1,7 @@
+w C:
+Lewa strona klucza: jakie wierzchołki zostały odwiedzone w postaci bitowej
+Prawa strona klucza: Jaki jest aktualnie odwiedzany wierzchołek
+Lewa strona wartości: łączny koszt ścieżki dla danego klucza
+Prawa strona wartości: Ostatni odwiedzony wierzchołek
+
+z m do k
