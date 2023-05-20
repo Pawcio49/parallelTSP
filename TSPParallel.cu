@@ -10,7 +10,9 @@ struct Subset {
 
 int myPow(int base, int power){
     int result = 1;
-    for(int i = 0; i<power; i++){ //OpenMP
+    int i;
+    #pragma omp parallel for reduction(*:result) private(i)
+    for(i = 0; i<power; i++){
         result *= base;
     }
     return result;
@@ -67,7 +69,7 @@ void print_subset(int *subset, int size) {
     printf("}\n");
 }
 
-// This function sets up final_path[]
+
 int TSP(int n, int **dist, int *path)
 {
     int C[myPow(2, n) - 1][n][2];
@@ -155,6 +157,23 @@ int readMatrix(int size, int **a, const char* filename)
     return 1;
 }
 
+int generateMatrix(int size, int **a)
+{
+    srand(time(NULL)); 
+    int min = 1;
+    int max = 1000;
+    for(int i = 0; i < size; ++i)
+    {
+        for(int j = 0; j < size; ++j) {
+            if(i==j)
+                a[i][j] = 0;
+            else
+                a[i][j] = rand() % (max - min + 1) + min;
+        }
+    }
+    return 1;
+}
+
 // Driver code
 int main(int argc, char *argv[])
 {
@@ -175,6 +194,7 @@ int main(int argc, char *argv[])
         adj[i] = (int *)malloc(N * sizeof(int));
     }
     readMatrix(N, adj, argv[2]);
+    // generateMatrix(N,adj);
     clock_t start, end;
     double cpu_time_used;
 
@@ -189,6 +209,6 @@ int main(int argc, char *argv[])
     printf("Path Taken : ");
     for (int i=0; i<N; i++)
         printf("%d ", final_path[i]);
-
+    printf("\n");
     return 0;
 }
