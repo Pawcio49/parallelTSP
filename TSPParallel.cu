@@ -19,45 +19,6 @@ int myPow(int base, int power){
     return result;
 }
 
-//generowanie kombinacji doku - przyjrzec się ifom zeby mocniej obciac
-struct Subset generateSubsets(int n, int subset_size) {
-    int *subset = (int *) malloc(subset_size * sizeof(int));
-    for (int i = 0; i < subset_size; i++) { //CUDA
-        subset[i] = i + 1;
-    }
-
-    struct Subset rootSubset = {};
-    rootSubset.value = (int *)malloc(subset_size * sizeof(int));
-    memcpy(rootSubset.value, subset, subset_size * sizeof(int));
-    rootSubset.next = (Subset *)malloc(sizeof(rootSubset));
-    struct Subset *nextSubset = rootSubset.next;
-
-    while (1) {
-        int i;
-        for (i = subset_size - 1; i >= 0; i--) {
-            if (subset[i] != i + n - subset_size + 1) {
-                break;
-            }
-        }
-
-        if (i < 0) {
-            break;
-        }
-
-        subset[i]++;
-        for (int j = i + 1; j < subset_size; j++) {
-            subset[j] = subset[j - 1] + 1;
-        }
-
-        nextSubset->value = (int *)malloc(subset_size * sizeof(int));
-        memcpy(nextSubset->value, subset, subset_size * sizeof(int));
-
-        nextSubset->next = (Subset *)malloc(subset_size * sizeof(int));
-        nextSubset = nextSubset->next;
-    }
-
-    return rootSubset;
-}
 
 void print_subset(int *subset, int size) {
     printf("{");
@@ -72,28 +33,47 @@ void print_subset(int *subset, int size) {
 
 typedef struct REC { int v; struct REC * prev; } rec;
      
-void drukuj (rec * x, int n, int subsetSize, int ***C) {
+void drukuj (rec * x, int n, int subsetSize, int ***C, int **dist) {
     int *subset = (int *)malloc(subsetSize * sizeof(int));
     int i = 0;
-    while (x) {
-        
+    while (x) { 
         if(x->v > 0){
-            // printf("%d, %d\n", *i, subsetSize );
             subset[i] = x->v;
             i++;
         }
         x = x -> prev;
     }
-    // printf("\n");
+    
+
+    int bits = 0;
+    for(int i=0; i<subsetSize; i++){ //CUDA lub OpenMP
+        bits |= 1 << subset[i];
+    }
+
+    for(int k=0; k<subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
+        int prev = bits & ~(1 << subset[k]);
+
+        int res[2] = {-1,-1};
+        for(int m=0; m<subsetSize; m++) { //OpenMP
+            if(subset[m]==subset[k])
+                continue;
+            int cost = C[prev][subset[m]][0] + dist[subset[m]][subset[k]];
+            if(res[0] == -1 || cost<res[0]){
+                res[0] = cost;
+                res[1] = subset[m];
+            }
+        }
+        #pragma omp critical
+        memcpy(C[bits][subset[k]], res, 2*sizeof(int));
+    }
+
     free(subset);
-    // printf("%d: %s\n",omp_get_thread_num(),buf);
-    // free(buf);
 }
      
-void genkomb(rec * x, int level, int n, int k, int subsetSize, int ***C) {
+void genkomb(rec * x, int level, int n, int k, int subsetSize, int ***C, int **dist) {
     rec X1,X2;
     if (level==n) {
-        drukuj(x,n, subsetSize, C);
+        drukuj(x,n, subsetSize, C, dist);
     } 
     else 
     {
@@ -101,13 +81,13 @@ void genkomb(rec * x, int level, int n, int k, int subsetSize, int ***C) {
         { 
             X1.prev = x;
             X1.v = 0;
-            if (n-level>k) genkomb(&X1,level+1,n, k, subsetSize, C);
+            if (n-level>k) genkomb(&X1,level+1,n, k, subsetSize, C, dist);
         }
         #pragma omp task  
         {
             X2.prev = x;
-            X2.v = level;
-            if (k>0) genkomb(&X2,level+1,n, k-1, subsetSize, C);
+            X2.v = level+1;
+            if (k>0) genkomb(&X2,level+1,n, k-1, subsetSize, C, dist);
         }
         #pragma omp taskwait  
     }
@@ -135,33 +115,7 @@ int TSP(int n, int **dist, int *path)
     for(int subsetSize=2; subsetSize<n; subsetSize++){
         #pragma omp parallel
         #pragma omp single
-        genkomb(NULL,0,n-1,subsetSize, subsetSize, C);
-        struct Subset rootSubset = generateSubsets(n-1, subsetSize);
-        struct Subset *subset = &rootSubset;
-        while (subset->next){
-            int bits = 0;
-            for(int i=0; i<subsetSize; i++){ //CUDA lub OpenMP
-                bits |= 1 << subset->value[i];
-            }
-
-            for(int k=0; k<subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
-                int prev = bits & ~(1 << subset->value[k]);
-
-                int res[2] = {-1,-1};
-                for(int m=0; m<subsetSize; m++) { //OpenMP
-                    if(subset->value[m]==subset->value[k])
-                        continue;
-                    int cost = C[prev][subset->value[m]][0] + dist[subset->value[m]][subset->value[k]];
-                    if(res[0] == -1 || cost<res[0]){
-                        res[0] = cost;
-                        res[1] = subset->value[m];
-                    }
-                }
-                memcpy(C[bits][subset->value[k]], res, 2*sizeof(int));
-            }
-
-            subset = subset->next;
-        }
+        genkomb(NULL,0,n-1,subsetSize, subsetSize, C, dist);
     }
 
     // We're interested in all bits but the least significant (the start state)
