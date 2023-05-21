@@ -31,9 +31,12 @@ void print_subset(int *subset, int size) {
     printf("}\n");
 }
 
-typedef struct REC { int v; struct REC * prev; } rec;
+typedef struct REC {
+    int v;
+    struct REC * prev;
+} rec;
      
-void drukuj (rec * x, int n, int subsetSize, int ***C, int **dist) {
+void fillC (rec * x, int subsetSize, int ***C, int **dist) {
     int *subset = (int *)malloc(subsetSize * sizeof(int));
     int i = 0;
     while (x) { 
@@ -63,31 +66,33 @@ void drukuj (rec * x, int n, int subsetSize, int ***C, int **dist) {
                 res[1] = subset[m];
             }
         }
-        #pragma omp critical
         memcpy(C[bits][subset[k]], res, 2*sizeof(int));
     }
-
     free(subset);
 }
      
-void genkomb(rec * x, int level, int n, int k, int subsetSize, int ***C, int **dist) {
+void generateCombinationsAndFillC(rec * x, int level, int n, int k, int subsetSize, int ***C, int **dist) {
     rec X1,X2;
     if (level==n) {
-        drukuj(x,n, subsetSize, C, dist);
+        fillC(x, subsetSize, C, dist);
     } 
     else 
     {
         #pragma omp task
         { 
-            X1.prev = x;
-            X1.v = 0;
-            if (n-level>k) genkomb(&X1,level+1,n, k, subsetSize, C, dist);
+            if (n-level>k) {
+                X1.prev = x;
+                X1.v = 0;
+                generateCombinationsAndFillC(&X1,level+1,n, k, subsetSize, C, dist);
+            } 
         }
-        #pragma omp task  
+        #pragma omp task 
         {
-            X2.prev = x;
-            X2.v = level+1;
-            if (k>0) genkomb(&X2,level+1,n, k-1, subsetSize, C, dist);
+            if (k>0) {
+                X2.prev = x;
+                X2.v = level+1;
+                generateCombinationsAndFillC(&X2,level+1,n, k-1, subsetSize, C, dist);
+            }
         }
         #pragma omp taskwait  
     }
@@ -95,7 +100,6 @@ void genkomb(rec * x, int level, int n, int k, int subsetSize, int ***C, int **d
 
 int TSP(int n, int **dist, int *path)
 {
-    // int C[myPow(2, n) - 1][n][2];
     int dimension0C = myPow(2, n) - 1;
     int ***C;
     C = (int ***)malloc(dimension0C * n * 2 * sizeof(int));
@@ -106,7 +110,7 @@ int TSP(int n, int **dist, int *path)
         }
     }
 
-    for(int i=1; i<n; i++) { //CUDA - sprobowac
+    for(int i=1; i<n; i++) { //CUDA - sprobowac  - raczej nie ma sensu
         C[1<<i][i][0] = dist[0][i];
         C[1<<i][i][1] = 0;
     }
@@ -115,7 +119,7 @@ int TSP(int n, int **dist, int *path)
     for(int subsetSize=2; subsetSize<n; subsetSize++){
         #pragma omp parallel
         #pragma omp single
-        genkomb(NULL,0,n-1,subsetSize, subsetSize, C, dist);
+        generateCombinationsAndFillC(NULL,0,n-1,subsetSize, subsetSize, C, dist);
     }
 
     // We're interested in all bits but the least significant (the start state)
