@@ -2,6 +2,7 @@
 #include <string.h>
 #include <time.h>
 #include <stdlib.h>
+#include <omp.h>
 
 struct Subset {
     int *value;
@@ -69,10 +70,61 @@ void print_subset(int *subset, int size) {
     printf("}\n");
 }
 
+typedef struct REC { int v; struct REC * prev; } rec;
+     
+void drukuj (rec * x, int n, int subsetSize, int ***C) {
+    int *subset = (int *)malloc(subsetSize * sizeof(int));
+    int i = 0;
+    while (x) {
+        
+        if(x->v > 0){
+            // printf("%d, %d\n", *i, subsetSize );
+            subset[i] = x->v;
+            i++;
+        }
+        x = x -> prev;
+    }
+    // printf("\n");
+    free(subset);
+    // printf("%d: %s\n",omp_get_thread_num(),buf);
+    // free(buf);
+}
+     
+void genkomb(rec * x, int level, int n, int k, int subsetSize, int ***C) {
+    rec X1,X2;
+    if (level==n) {
+        drukuj(x,n, subsetSize, C);
+    } 
+    else 
+    {
+        #pragma omp task
+        { 
+            X1.prev = x;
+            X1.v = 0;
+            if (n-level>k) genkomb(&X1,level+1,n, k, subsetSize, C);
+        }
+        #pragma omp task  
+        {
+            X2.prev = x;
+            X2.v = level;
+            if (k>0) genkomb(&X2,level+1,n, k-1, subsetSize, C);
+        }
+        #pragma omp taskwait  
+    }
+}
 
 int TSP(int n, int **dist, int *path)
 {
-    int C[myPow(2, n) - 1][n][2];
+    // int C[myPow(2, n) - 1][n][2];
+    int dimension0C = myPow(2, n) - 1;
+    int ***C;
+    C = (int ***)malloc(dimension0C * n * 2 * sizeof(int));
+    for(int i=0; i<dimension0C;i++) {
+        C[i] = (int **)malloc(n * 2 * sizeof(int));
+        for(int j=0; j<n; j++) {
+            C[i][j] = (int *)malloc(2 * sizeof(int));
+        }
+    }
 
     for(int i=1; i<n; i++) { //CUDA - sprobowac
         C[1<<i][i][0] = dist[0][i];
@@ -81,7 +133,9 @@ int TSP(int n, int **dist, int *path)
 
 
     for(int subsetSize=2; subsetSize<n; subsetSize++){
-        //jednoczesnie generowac kombinacje i sprawdzac wartosci dla nich. Pan mowil o przesylaniu kombinacji paczkami
+        #pragma omp parallel
+        #pragma omp single
+        genkomb(NULL,0,n-1,subsetSize, subsetSize, C);
         struct Subset rootSubset = generateSubsets(n-1, subsetSize);
         struct Subset *subset = &rootSubset;
         while (subset->next){
@@ -103,8 +157,7 @@ int TSP(int n, int **dist, int *path)
                         res[1] = subset->value[m];
                     }
                 }
-                C[bits][subset->value[k]][0] = res[0];
-                C[bits][subset->value[k]][1] = res[1];
+                memcpy(C[bits][subset->value[k]], res, 2*sizeof(int));
             }
 
             subset = subset->next;
