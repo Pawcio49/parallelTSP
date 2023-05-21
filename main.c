@@ -56,10 +56,10 @@ struct Subset generateSubsets(int n, int subset_size) {
     return rootSubset;
 }
 
-void print_subset(int *subset, int size) {
+void print_subset(struct Subset *subset, int size) {
     printf("{");
     for (int i = 0; i < size; i++) {
-        printf("%d", subset[i]);
+        printf("%d", subset->value[i]);
         if (i < size - 1) {
             printf(", ");
         }
@@ -83,6 +83,7 @@ int TSP(int n, int dist[n][n], int path[n])
         struct Subset rootSubset = generateSubsets(n-1, subsetSize);
         struct Subset *subset = &rootSubset;
         while (subset->next){
+            print_subset(subset,subsetSize);
             int bits = 0;
             for(int i=0; i<subsetSize; i++){ //CUDA lub OpenMP
                 bits |= 1 << subset->value[i];
