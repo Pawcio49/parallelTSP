@@ -4,10 +4,19 @@
 #include <stdlib.h>
 #include <omp.h>
 
-struct Subset {
-    int *value;
-    struct Subset *next;
-};
+
+typedef struct FillCData {
+    int subsetSize;
+    int ***C;
+    int **dist;
+} fillCData;
+
+
+typedef struct REC {
+    int v;
+    struct REC * prev;
+} rec;
+
 
 int myPow(int base, int power){
     int result = 1;
@@ -31,13 +40,9 @@ void print_subset(int *subset, int size) {
     printf("}\n");
 }
 
-typedef struct REC {
-    int v;
-    struct REC * prev;
-} rec;
      
-void fillC (rec * x, int subsetSize, int ***C, int **dist) {
-    int *subset = (int *)malloc(subsetSize * sizeof(int));
+void fillC (rec * x, fillCData data) {
+    int *subset = (int *)malloc(data.subsetSize * sizeof(int));
     int i = 0;
     while (x) { 
         if(x->v > 0){
@@ -47,56 +52,57 @@ void fillC (rec * x, int subsetSize, int ***C, int **dist) {
         x = x -> prev;
     }
     
-
     int bits = 0;
-    for(int i=0; i<subsetSize; i++){ //CUDA lub OpenMP
+    for(int i=0; i<data.subsetSize; i++){ //CUDA lub OpenMP
         bits |= 1 << subset[i];
     }
 
-    for(int k=0; k<subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
+    for(int k=0; k<data.subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
         int prev = bits & ~(1 << subset[k]);
 
         int res[2] = {-1,-1};
-        for(int m=0; m<subsetSize; m++) { //OpenMP
+        for(int m=0; m<data.subsetSize; m++) { //OpenMP (oby CUDA)
             if(subset[m]==subset[k])
                 continue;
-            int cost = C[prev][subset[m]][0] + dist[subset[m]][subset[k]];
+            int cost = data.C[prev][subset[m]][0] + data.dist[subset[m]][subset[k]];
             if(res[0] == -1 || cost<res[0]){
                 res[0] = cost;
                 res[1] = subset[m];
             }
         }
-        memcpy(C[bits][subset[k]], res, 2*sizeof(int));
+        memcpy(data.C[bits][subset[k]], res, 2*sizeof(int));
     }
+    // printf("%d\n", omp_get_thread_num());
     free(subset);
 }
      
-void generateCombinationsAndFillC(rec * x, int level, int n, int k, int subsetSize, int ***C, int **dist) {
+void generateCombinationsAndFillC(rec * x, int level, int k, fillCData data) {
     rec X1,X2;
-    if (level==n) {
-        fillC(x, subsetSize, C, dist);
+    if (level==0) {
+        fillC(x, data);
     } 
     else 
     {
         #pragma omp task
         { 
-            if (n-level>k) {
+            if (level>k) {
                 X1.prev = x;
                 X1.v = 0;
-                generateCombinationsAndFillC(&X1,level+1,n, k, subsetSize, C, dist);
+                generateCombinationsAndFillC(&X1,level-1, k, data);
             } 
         }
         #pragma omp task 
         {
             if (k>0) {
                 X2.prev = x;
-                X2.v = level+1;
-                generateCombinationsAndFillC(&X2,level+1,n, k-1, subsetSize, C, dist);
+                X2.v = level;
+                generateCombinationsAndFillC(&X2,level-1, k-1, data);
             }
         }
         #pragma omp taskwait  
     }
 }
+
 
 int TSP(int n, int **dist, int *path)
 {
@@ -115,11 +121,14 @@ int TSP(int n, int **dist, int *path)
         C[1<<i][i][1] = 0;
     }
 
-
+    fillCData data;
+    data.C = C;
+    data.dist = dist;
     for(int subsetSize=2; subsetSize<n; subsetSize++){
+        data.subsetSize = subsetSize;
         #pragma omp parallel
         #pragma omp single
-        generateCombinationsAndFillC(NULL,0,n-1,subsetSize, subsetSize, C, dist);
+        generateCombinationsAndFillC(NULL, n-1, subsetSize, data);
     }
 
     // We're interested in all bits but the least significant (the start state)
@@ -128,7 +137,7 @@ int TSP(int n, int **dist, int *path)
     // Calculate optimal cost
     int opt = -1;
     int parent;
-    for(int k=1; k<n; k++)  { //CUDA lub OpenMP
+    for(int k=1; k<n; k++)  { //CUDA lub OpenMP - raczej nie ma sensu
         int cost = C[bits][k][0] + dist[k][0];
         if(opt== -1 || cost<opt){
             opt = cost;
@@ -144,7 +153,7 @@ int TSP(int n, int **dist, int *path)
     }
 
     path[0] = 0;
-
+    free(C);
     return opt;
 }
 
@@ -185,7 +194,7 @@ int generateMatrix(int size, int **a)
     return 1;
 }
 
-// Driver code
+
 int main(int argc, char *argv[])
 {
     if(argc<3){
@@ -194,8 +203,6 @@ int main(int argc, char *argv[])
     }
 
     const int N = atoi(argv[1]);
-    // final_path[] stores the final solution ie, the
-    // path of the salesman.
     int final_path[N];
 
     // Adjacency matrix for the given graph
@@ -204,8 +211,8 @@ int main(int argc, char *argv[])
     for(int i=0;i<N;i++){
         adj[i] = (int *)malloc(N * sizeof(int));
     }
-    readMatrix(N, adj, argv[2]);
-    // generateMatrix(N,adj);
+    // readMatrix(N, adj, argv[2]);
+    generateMatrix(N,adj);
     clock_t start, end;
     double cpu_time_used;
 
@@ -221,5 +228,6 @@ int main(int argc, char *argv[])
     for (int i=0; i<N; i++)
         printf("%d ", final_path[i]);
     printf("\n");
+    free(adj);
     return 0;
 }

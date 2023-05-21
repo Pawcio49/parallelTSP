@@ -2,59 +2,31 @@
 #include <string.h>
 #include <time.h>
 #include <stdlib.h>
+#include <omp.h>
 
-struct Subset {
-    int *value;
-    struct Subset *next;
-};
+
+typedef struct FillCData {
+    int subsetSize;
+    int ***C;
+    int **dist;
+} fillCData;
+
+
+typedef struct REC {
+    int v;
+    struct REC * prev;
+} rec;
+
 
 int myPow(int base, int power){
     int result = 1;
-    for(int i = 0; i<power; i++){ //OpenMP
+    int i;
+    for(i = 0; i<power; i++){
         result *= base;
     }
     return result;
 }
 
-//generowanie kombinacji doku - przyjrzec się ifom zeby mocniej obciac
-struct Subset generateSubsets(int n, int subset_size) {
-    int *subset = (int *) malloc(subset_size * sizeof(int));
-    for (int i = 0; i < subset_size; i++) { //CUDA
-        subset[i] = i + 1;
-    }
-
-    struct Subset rootSubset = {};
-    rootSubset.value = malloc(subset_size * sizeof(int));
-    memcpy(rootSubset.value, subset, subset_size * sizeof(int));
-    rootSubset.next = malloc(sizeof(rootSubset));
-    struct Subset *nextSubset = rootSubset.next;
-
-    while (1) {
-        int i;
-        for (i = subset_size - 1; i >= 0; i--) {
-            if (subset[i] != i + n - subset_size + 1) {
-                break;
-            }
-        }
-
-        if (i < 0) {
-            break;
-        }
-
-        subset[i]++;
-        for (int j = i + 1; j < subset_size; j++) {
-            subset[j] = subset[j - 1] + 1;
-        }
-
-        nextSubset->value = malloc(subset_size * sizeof(int));
-        memcpy(nextSubset->value, subset, subset_size * sizeof(int));
-
-        nextSubset->next = malloc(subset_size * sizeof(int));
-        nextSubset = nextSubset->next;
-    }
-
-    return rootSubset;
-}
 
 void print_subset(int *subset, int size) {
     printf("{");
@@ -67,46 +39,89 @@ void print_subset(int *subset, int size) {
     printf("}\n");
 }
 
-// This function sets up final_path[]
-int TSP(int n, int dist[n][n], int path[n])
-{
-    int C[myPow(2, n) - 1][n][2];
+     
+void fillC (rec * x, fillCData data) {
+    int *subset = (int *)malloc(data.subsetSize * sizeof(int));
+    int i = 0;
+    while (x) { 
+        if(x->v > 0){
+            subset[i] = x->v;
+            i++;
+        }
+        x = x -> prev;
+    }
+    
+    int bits = 0;
+    for(int i=0; i<data.subsetSize; i++){ //CUDA lub OpenMP
+        bits |= 1 << subset[i];
+    }
 
-    for(int i=1; i<n; i++) { //CUDA - sprobowac
+    for(int k=0; k<data.subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
+        int prev = bits & ~(1 << subset[k]);
+
+        int res[2] = {-1,-1};
+        for(int m=0; m<data.subsetSize; m++) { //OpenMP
+            if(subset[m]==subset[k])
+                continue;
+            int cost = data.C[prev][subset[m]][0] + data.dist[subset[m]][subset[k]];
+            if(res[0] == -1 || cost<res[0]){
+                res[0] = cost;
+                res[1] = subset[m];
+            }
+        }
+        memcpy(data.C[bits][subset[k]], res, 2*sizeof(int));
+    }
+    free(subset);
+}
+     
+void generateCombinationsAndFillC(rec * x, int level, int k, fillCData data) {
+    rec X1,X2;
+    if (level==0) {
+        fillC(x, data);
+    } 
+    else 
+    {
+        { 
+            if (level>k) {
+                X1.prev = x;
+                X1.v = 0;
+                generateCombinationsAndFillC(&X1,level-1, k, data);
+            } 
+        }
+        {
+            if (k>0) {
+                X2.prev = x;
+                X2.v = level;
+                generateCombinationsAndFillC(&X2,level-1, k-1, data);
+            }
+        }
+    }
+}
+
+
+int TSP(int n, int **dist, int *path)
+{
+    int dimension0C = myPow(2, n) - 1;
+    int ***C;
+    C = (int ***)malloc(dimension0C * n * 2 * sizeof(int));
+    for(int i=0; i<dimension0C;i++) {
+        C[i] = (int **)malloc(n * 2 * sizeof(int));
+        for(int j=0; j<n; j++) {
+            C[i][j] = (int *)malloc(2 * sizeof(int));
+        }
+    }
+
+    for(int i=1; i<n; i++) { //CUDA - sprobowac  - raczej nie ma sensu
         C[1<<i][i][0] = dist[0][i];
         C[1<<i][i][1] = 0;
     }
 
-
+    fillCData data;
+    data.C = C;
+    data.dist = dist;
     for(int subsetSize=2; subsetSize<n; subsetSize++){
-        //jednoczesnie generowac kombinacje i sprawdzac wartosci dla nich. Pan mowil o przesylaniu kombinacji paczkami
-        struct Subset rootSubset = generateSubsets(n-1, subsetSize);
-        struct Subset *subset = &rootSubset;
-        while (subset->next){
-            int bits = 0;
-            for(int i=0; i<subsetSize; i++){ //CUDA lub OpenMP
-                bits |= 1 << subset->value[i];
-            }
-
-            for(int k=0; k<subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
-                int prev = bits & ~(1 << subset->value[k]);
-
-                int res[2] = {-1,-1};
-                for(int m=0; m<subsetSize; m++) { //OpenMP
-                    if(subset->value[m]==subset->value[k])
-                        continue;
-                    int cost = C[prev][subset->value[m]][0] + dist[subset->value[m]][subset->value[k]];
-                    if(res[0] == -1 || cost<res[0]){
-                        res[0] = cost;
-                        res[1] = subset->value[m];
-                    }
-                }
-                C[bits][subset->value[k]][0] = res[0];
-                C[bits][subset->value[k]][1] = res[1];
-            }
-
-            subset = subset->next;
-        }
+        data.subsetSize = subsetSize;
+        generateCombinationsAndFillC(NULL, n-1, subsetSize, data);
     }
 
     // We're interested in all bits but the least significant (the start state)
@@ -131,25 +146,44 @@ int TSP(int n, int dist[n][n], int path[n])
     }
 
     path[0] = 0;
-
+    free(C);
     return opt;
 }
 
-int readMatrix(size_t size, int (*a)[size], const char* filename)
+int readMatrix(int size, int **a, const char* filename)
 {
     FILE *pf;
     pf = fopen (filename, "r");
     if (pf == NULL)
         return 0;
 
-    for(size_t i = 0; i < size; ++i)
+    for(int i = 0; i < size; ++i)
     {
-        for(size_t j = 0; j < size; ++j)
+        for(int j = 0; j < size; ++j) {
+            
             fscanf(pf, "%d", a[i] + j);
+        }
     }
 
 
     fclose (pf);
+    return 1;
+}
+
+int generateMatrix(int size, int **a)
+{
+    srand(time(NULL)); 
+    int min = 1;
+    int max = 1000;
+    for(int i = 0; i < size; ++i)
+    {
+        for(int j = 0; j < size; ++j) {
+            if(i==j)
+                a[i][j] = 0;
+            else
+                a[i][j] = rand() % (max - min + 1) + min;
+        }
+    }
     return 1;
 }
 
@@ -167,9 +201,13 @@ int main(int argc, char *argv[])
     int final_path[N];
 
     // Adjacency matrix for the given graph
-    int adj[N][N];
-    readMatrix(N, adj, argv[2]);
-
+    int **adj;
+    adj = (int **)malloc(N * N * sizeof(int));
+    for(int i=0;i<N;i++){
+        adj[i] = (int *)malloc(N * sizeof(int));
+    }
+    // readMatrix(N, adj, argv[2]);
+    generateMatrix(N,adj);
     clock_t start, end;
     double cpu_time_used;
 
@@ -184,6 +222,7 @@ int main(int argc, char *argv[])
     printf("Path Taken : ");
     for (int i=0; i<N; i++)
         printf("%d ", final_path[i]);
-
+    printf("\n");
+    free(adj);
     return 0;
 }
