@@ -86,9 +86,6 @@ void fillC (rec * x, fillCData data) {
         bits |= 1 << subset[i];
     }
 
-    
-
-
     for(int k=0; k<data.subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
         int prev = bits & ~(1 << subset[k]);
 
@@ -110,10 +107,10 @@ void fillC (rec * x, fillCData data) {
         
          // Konfiguracja rozmiaru bloków i siatki
         int threadsPerBlock = data.subsetSize;
-        int blocksPerGrid = omp_get_thread_num();
+        int gridSize = 1;
 
         // Wywołanie funkcji na GPU
-        calculateCosts<<<blocksPerGrid, threadsPerBlock>>>(d_subset, data.subsetSize, d_res, prev, k, d_C, data.n);
+        calculateCosts<<<gridSize, threadsPerBlock>>>(d_subset, data.subsetSize, d_res, prev, k, d_C, data.n);
 
         // printf("blocksPerGrid = %d\n", blocksPerGrid);
         // printf("threadsPerBlock = %d\n", threadsPerBlock);
@@ -164,8 +161,8 @@ void generateCombinationsAndFillC(rec * x, int level, int k, fillCData data) {
 int TSP(int n, int *dist, int *path)
 {
     int data_size = n*n;
-    int block_size = 256;
-    int grid_size = (data_size + block_size - 1) / block_size;
+    int threadsPerBlock = data_size;
+    int grid_size = 1;
 
     // Alokacja pamięci na GPU
     int* d_input_data;
@@ -175,7 +172,7 @@ int TSP(int n, int *dist, int *path)
     cudaMemcpy(d_input_data, dist, data_size * sizeof(int), cudaMemcpyHostToDevice);
     
     // Uruchomienie kernela CUDA
-    process_data<<<grid_size, block_size>>>(d_input_data, data_size);
+    process_data<<<grid_size, threadsPerBlock>>>(d_input_data, data_size);
 
     int dimension0C = myPow(2, n) - 1;
     int CSize = dimension0C * n * 2;
@@ -192,9 +189,6 @@ int TSP(int n, int *dist, int *path)
         C[1<<i][0][i] = dist[0*n+i];
         C[1<<i][1][i] = 0;
     }
-
-    // printf("C = %d\n", C[8*15 + 3*4]);
-    // printf("CSize = %d\n", CSize);
 
     fillCData data;
     data.C = C;
