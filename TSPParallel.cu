@@ -45,18 +45,14 @@ void print_subset(int *subset, int size) {
     printf("}\n");
 }
 
+// __device__ int* global_data; 
 
 // Funkcja uruchamiana na GPU
-__global__ void calculateCosts(int* subset, int subsetSize, int* res, int prev, int k, int* C, int* dist, int n, int dimension0C) {
-    int m = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void calculateCosts(int* subset, int subsetSize, int* res, int prev, int k, int* C, int* dist, int n) {
+    int m = threadIdx.x;
 
-    if (m < subsetSize && subset[m] != subset[k]) {
+    if (m < subsetSize && m != k) {
         int cost = C[subset[m]] + dist[subset[m] * n + subset[k]];
-        // int cost = C[prev * dimension0C + subset[m] * n];
-        // int cost = C[8*15 + 3*4];
-        // int cost = n;
-        // int cost = dist[subset[m] * n + subset[k]];
-        // int cost = subset[m] * n + subset[k];
         atomicMin(&res[0], cost);
         if (cost == res[0]) {
             res[1] = subset[m];
@@ -88,9 +84,6 @@ void fillC (rec * x, fillCData data) {
         }
     }
 
-    
-    
-    
 
     for(int k=0; k<data.subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
         int prev = bits & ~(1 << subset[k]);
@@ -116,10 +109,13 @@ void fillC (rec * x, fillCData data) {
         
          // Konfiguracja rozmiaru bloków i siatki
         int threadsPerBlock = data.subsetSize;
-        int blocksPerGrid = (data.subsetSize + threadsPerBlock - 1) / threadsPerBlock;
+        int blocksPerGrid = omp_get_thread_num();
 
         // Wywołanie funkcji na GPU
-        calculateCosts<<<blocksPerGrid, threadsPerBlock>>>(d_subset, data.subsetSize, d_res, prev, k, d_C, d_dist, data.n, data.dimension0C);
+        calculateCosts<<<blocksPerGrid, threadsPerBlock>>>(d_subset, data.subsetSize, d_res, prev, k, d_C, d_dist, data.n);
+
+        // printf("blocksPerGrid = %d\n", blocksPerGrid);
+        // printf("threadsPerBlock = %d\n", threadsPerBlock);
 
         // Przesyłanie wyników z GPU do hosta
         cudaMemcpy(res, d_res, 2 * sizeof(int), cudaMemcpyDeviceToHost);
