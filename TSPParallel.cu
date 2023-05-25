@@ -12,7 +12,6 @@ typedef struct FillCData {
     int ***C;
     int CSize;
     int n;
-    int dimension0C;
 } fillCData;
 
 
@@ -44,24 +43,24 @@ void print_subset(int *subset, int size) {
     printf("}\n");
 }
 
+
 __device__ int global_dist[1000]; 
 
+
 __global__ void process_data(int* input_data, int data_size) {
-    // Odczytanie identyfikatora wątku
     int thread_id = blockIdx.x * blockDim.x + threadIdx.x;
     
-    // Przykład zapisu danych do zmiennej globalnej
     if (thread_id < data_size) {
         global_dist[thread_id] = input_data[thread_id];
     }
 }
 
-// Funkcja uruchamiana na GPU
-__global__ void calculateCosts(int* subset, int subsetSize, int* res, int prev, int k, int* C, int n) {
+
+__global__ void calculateCosts(int* subset, int subsetSize, int* res, int k, int* CPrev0, int n) {
     int m = threadIdx.x;
 
     if (m < subsetSize && m != k) {
-        int cost = C[subset[m]] + global_dist[subset[m] * n + subset[k]];
+        int cost = CPrev0[subset[m]] + global_dist[subset[m] * n + subset[k]];
         atomicMin(&res[0], cost);
         if (cost == res[0]) {
             res[1] = subset[m];
@@ -82,11 +81,11 @@ void fillC (rec * x, fillCData data) {
     }
     
     int bits = 0;
-    for(int i=0; i<data.subsetSize; i++){ //CUDA lub OpenMP
+    for(int i=0; i<data.subsetSize; i++){
         bits |= 1 << subset[i];
     }
 
-    for(int k=0; k<data.subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
+    for(int k=0; k<data.subsetSize; k++) {
         int prev = bits & ~(1 << subset[k]);
 
         int res[2] = {999999,0};
@@ -95,30 +94,22 @@ void fillC (rec * x, fillCData data) {
         int* d_res;
         int* d_C;
 
-        // Alokacja pamięci na GPU
+        
         cudaMalloc((void**)&d_subset, data.subsetSize * sizeof(int));
         cudaMalloc((void**)&d_res, 2 * sizeof(int));
         cudaMalloc((void**)&d_C, data.n * sizeof(int));
-        // printf("C2 = %d\n", data.C[132]);
-        // Przesyłanie danych z hosta do GPU
+        
         cudaMemcpy(d_subset, subset, data.subsetSize * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(d_res, res, 2 * sizeof(int), cudaMemcpyHostToDevice);
         cudaMemcpy(d_C, data.C[prev][0], data.n * sizeof(int), cudaMemcpyHostToDevice);
         
-         // Konfiguracja rozmiaru bloków i siatki
         int threadsPerBlock = data.subsetSize;
         int gridSize = 1;
 
-        // Wywołanie funkcji na GPU
-        calculateCosts<<<gridSize, threadsPerBlock>>>(d_subset, data.subsetSize, d_res, prev, k, d_C, data.n);
+        calculateCosts<<<gridSize, threadsPerBlock>>>(d_subset, data.subsetSize, d_res, k, d_C, data.n);
 
-        // printf("blocksPerGrid = %d\n", blocksPerGrid);
-        // printf("threadsPerBlock = %d\n", threadsPerBlock);
-
-        // Przesyłanie wyników z GPU do hosta
         cudaMemcpy(res, d_res, 2 * sizeof(int), cudaMemcpyDeviceToHost);
-        // printf("%d\n", res[0]);
-        // Zwolnienie pamięci na GPU
+
         cudaFree(d_subset);
         cudaFree(d_res);
         cudaFree(d_C);
@@ -160,18 +151,15 @@ void generateCombinationsAndFillC(rec * x, int level, int k, fillCData data) {
 
 int TSP(int n, int *dist, int *path)
 {
-    int data_size = n*n;
-    int threadsPerBlock = data_size;
-    int grid_size = 1;
+    int data_size = n*n;   
 
-    // Alokacja pamięci na GPU
     int* d_input_data;
     cudaMalloc((void**)&d_input_data, data_size * sizeof(int));
     
-    // Kopiowanie danych wejściowych z hosta do GPU
     cudaMemcpy(d_input_data, dist, data_size * sizeof(int), cudaMemcpyHostToDevice);
     
-    // Uruchomienie kernela CUDA
+    int threadsPerBlock = data_size;
+    int grid_size = 1;
     process_data<<<grid_size, threadsPerBlock>>>(d_input_data, data_size);
 
     int dimension0C = myPow(2, n) - 1;
@@ -185,7 +173,7 @@ int TSP(int n, int *dist, int *path)
         }
     }
 
-    for(int i=1; i<n; i++) { //CUDA - sprobowac  - raczej nie ma sensu
+    for(int i=1; i<n; i++) {
         C[1<<i][0][i] = dist[0*n+i];
         C[1<<i][1][i] = 0;
     }
@@ -194,7 +182,6 @@ int TSP(int n, int *dist, int *path)
     data.C = C;
     data.CSize = dimension0C * n * 2;
     data.n = n;
-    data.dimension0C = dimension0C;
     for(int subsetSize=2; subsetSize<n; subsetSize++){
         data.subsetSize = subsetSize;
         #pragma omp parallel
@@ -205,10 +192,10 @@ int TSP(int n, int *dist, int *path)
     // We're interested in all bits but the least significant (the start state)
     int bits = (myPow(2, n) - 1) - 1;
 
-    // // Calculate optimal cost
+    // Calculate optimal cost
     int opt = -1;
     int parent;
-    for(int k=1; k<n; k++)  { //CUDA lub OpenMP - raczej nie ma sensu
+    for(int k=1; k<n; k++)  {
         int cost = C[bits][0][k] + dist[k*n + 0];
         if(opt== -1 || cost<opt){
             opt = cost;
@@ -216,7 +203,7 @@ int TSP(int n, int *dist, int *path)
         }
     }
 
-    for(int i=n-1; i>0; i--) { // tu bez zrownoleglenia, bo musi byc po kolei
+    for(int i=n-1; i>0; i--) {
         path[i] = parent;
         int new_bits = bits & ~(1 << parent);
         parent = C[bits][1][parent];
@@ -242,7 +229,6 @@ int readMatrix(int size, int **a, const char* filename)
             fscanf(pf, "%d", a[i] + j);
         }
     }
-
 
     fclose (pf);
     return 1;
