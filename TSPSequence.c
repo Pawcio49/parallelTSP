@@ -206,8 +206,8 @@ int main(int argc, char *argv[])
     for(int i=0;i<N;i++){
         adj[i] = (int *)malloc(N * sizeof(int));
     }
-    // readMatrix(N, adj, argv[2]);
-    generateMatrix(N,adj);
+    readMatrix(N, adj, argv[2]);
+    // generateMatrix(N,adj);
     clock_t start, end;
     double cpu_time_used;
 

@@ -3,12 +3,17 @@
 #include <time.h>
 #include <stdlib.h>
 #include <omp.h>
+#include <cuda.h>
+#include <cuda_runtime.h>
 
 
 typedef struct FillCData {
     int subsetSize;
-    int ***C;
+    int *C;
     int **dist;
+    int CSize;
+    int n;
+    int dimension0C;
 } fillCData;
 
 
@@ -40,7 +45,28 @@ void print_subset(int *subset, int size) {
     printf("}\n");
 }
 
-     
+
+// Funkcja uruchamiana na GPU
+__global__ void calculateCosts(int* subset, int subsetSize, int* res, int prev, int k, int* C, int* dist, int n, int dimension0C) {
+    int m = blockIdx.x * blockDim.x + threadIdx.x;
+    int cost = C[132];
+    res[0] = cost;
+
+    // if (m < subsetSize && subset[m] != subset[k]) {
+    //     // int cost = C[prev * dimension0C + subset[m] * n] + dist[subset[m] * n + subset[k]];
+    //     // int cost = C[prev * dimension0C + subset[m] * n];
+    //     int cost = C[8*15 + 3*4];
+    //     // int cost = n;
+    //     // int cost = dist[subset[m] * n + subset[k]];
+    //     // int cost = subset[m] * n + subset[k];
+    //     atomicMin(&res[0], cost);
+    //     if (cost == res[0]) {
+    //         res[1] = subset[m];
+    //     }
+    // }
+}
+
+
 void fillC (rec * x, fillCData data) {
     int *subset = (int *)malloc(data.subsetSize * sizeof(int));
     int i = 0;
@@ -57,20 +83,58 @@ void fillC (rec * x, fillCData data) {
         bits |= 1 << subset[i];
     }
 
+    int* flatDist = new int[data.n*data.n];
+    for (int i = 0; i < data.n; i++) {
+        for (int j = 0; j < data.n; j++) {
+            flatDist[i * data.n + j] = data.dist[i][j];
+        }
+    }
+
+    
+    
+    
+
     for(int k=0; k<data.subsetSize; k++) { // tu bez zrownoleglenia, bo musi byc po kolei
         int prev = bits & ~(1 << subset[k]);
 
-        int res[2] = {-1,-1};
-        for(int m=0; m<data.subsetSize; m++) { //OpenMP (oby CUDA)
-            if(subset[m]==subset[k])
-                continue;
-            int cost = data.C[prev][subset[m]][0] + data.dist[subset[m]][subset[k]];
-            if(res[0] == -1 || cost<res[0]){
-                res[0] = cost;
-                res[1] = subset[m];
-            }
-        }
-        memcpy(data.C[bits][subset[k]], res, 2*sizeof(int));
+        int res[2] = {0,99999};
+        
+        int* d_subset;
+        int* d_res;
+        int* d_C;
+        int* d_dist;
+
+        // Alokacja pamięci na GPU
+        cudaMalloc((void**)&d_subset, data.subsetSize * sizeof(int));
+        cudaMalloc((void**)&d_res, 2 * sizeof(int));
+        cudaMalloc((void**)&d_C, data.CSize * sizeof(int));
+        cudaMalloc((void**)&d_dist, data.n * data.n * sizeof(int));
+        data.C[132] = 7;
+        printf("C2 = %d\n", data.C[132]);
+        // Przesyłanie danych z hosta do GPU
+        cudaMemcpy(d_subset, subset, data.subsetSize * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_res, res, 2 * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_C, data.C, data.CSize * sizeof(int), cudaMemcpyHostToDevice);
+        cudaMemcpy(d_dist, flatDist, data.n * data.n * sizeof(int), cudaMemcpyHostToDevice);
+        
+         // Konfiguracja rozmiaru bloków i siatki
+        int threadsPerBlock = data.subsetSize;
+        int blocksPerGrid = (data.subsetSize + threadsPerBlock - 1) / threadsPerBlock;
+
+        // Wywołanie funkcji na GPU
+        calculateCosts<<<blocksPerGrid, threadsPerBlock>>>(d_subset, data.subsetSize, d_res, prev, k, d_C, d_dist, data.n, data.dimension0C);
+
+        // Przesyłanie wyników z GPU do hosta
+        cudaMemcpy(res, d_res, 2 * sizeof(int), cudaMemcpyDeviceToHost);
+        printf("%d\n", res[0]);
+        // Zwolnienie pamięci na GPU
+        cudaFree(d_subset);
+        cudaFree(d_res);
+        cudaFree(d_C);
+        cudaFree(d_dist);
+
+        data.C[bits*data.dimension0C + subset[k] * data.n] = res[0];
+        data.C[bits*data.dimension0C + subset[k] * data.n + 1] = res[1];
     }
     // printf("%d\n", omp_get_thread_num());
     free(subset);
@@ -107,38 +171,44 @@ void generateCombinationsAndFillC(rec * x, int level, int k, fillCData data) {
 int TSP(int n, int **dist, int *path)
 {
     int dimension0C = myPow(2, n) - 1;
-    int ***C;
-    C = (int ***)malloc(dimension0C * n * 2 * sizeof(int));
+    int CSize = dimension0C * n * 2;
+    int *C = (int *)malloc(CSize * sizeof(int));
     for(int i=0; i<dimension0C;i++) {
-        C[i] = (int **)malloc(n * 2 * sizeof(int));
         for(int j=0; j<n; j++) {
-            C[i][j] = (int *)malloc(2 * sizeof(int));
+            C[i*dimension0C + j*n] = -1;
+            C[i*dimension0C + j*n + 1] = -1;
         }
     }
 
     for(int i=1; i<n; i++) { //CUDA - sprobowac  - raczej nie ma sensu
-        C[1<<i][i][0] = dist[0][i];
-        C[1<<i][i][1] = 0;
+        C[(1<<i)*dimension0C + i*n] = dist[0][i];
+        C[(1<<i)*dimension0C + i*n + 1] = 0;
     }
+
+    // printf("C = %d\n", C[8*15 + 3*4]);
+    // printf("CSize = %d\n", CSize);
 
     fillCData data;
     data.C = C;
     data.dist = dist;
+    data.CSize = dimension0C * n * 2;
+    data.n = n;
+    data.dimension0C = dimension0C;
     for(int subsetSize=2; subsetSize<n; subsetSize++){
         data.subsetSize = subsetSize;
-        #pragma omp parallel
-        #pragma omp single
+        // #pragma omp parallel
+        // #pragma omp single
         generateCombinationsAndFillC(NULL, n-1, subsetSize, data);
     }
 
-    // We're interested in all bits but the least significant (the start state)
+    // // We're interested in all bits but the least significant (the start state)
     int bits = (myPow(2, n) - 1) - 1;
 
-    // Calculate optimal cost
+    // // Calculate optimal cost
     int opt = -1;
     int parent;
     for(int k=1; k<n; k++)  { //CUDA lub OpenMP - raczej nie ma sensu
-        int cost = C[bits][k][0] + dist[k][0];
+        int cost = C[bits*dimension0C + k*n] + dist[k][0];
         if(opt== -1 || cost<opt){
             opt = cost;
             parent = k;
@@ -148,7 +218,7 @@ int TSP(int n, int **dist, int *path)
     for(int i=n-1; i>0; i--) { // tu bez zrownoleglenia, bo musi byc po kolei
         path[i] = parent;
         int new_bits = bits & ~(1 << parent);
-        parent = C[bits][parent][1];
+        parent = C[bits*dimension0C + parent*n + 1];
         bits = new_bits;
     }
 
@@ -211,8 +281,8 @@ int main(int argc, char *argv[])
     for(int i=0;i<N;i++){
         adj[i] = (int *)malloc(N * sizeof(int));
     }
-    // readMatrix(N, adj, argv[2]);
-    generateMatrix(N,adj);
+    readMatrix(N, adj, argv[2]);
+    // generateMatrix(N,adj);
     clock_t start, end;
     double cpu_time_used;
 
