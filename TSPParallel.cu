@@ -6,6 +6,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
+#define maxLength 1000
 
 typedef struct FillCData {
     int subsetSize;
@@ -44,7 +45,7 @@ void print_subset(int *subset, int size) {
 }
 
 
-__device__ int global_dist[1000]; 
+__device__ int global_dist[maxLength]; 
 
 
 __global__ void process_data(int* input_data, int data_size) {
@@ -85,6 +86,7 @@ void fillC (rec * x, fillCData data) {
         bits |= 1 << subset[i];
     }
 
+    #pragma omp parallel for
     for(int k=0; k<data.subsetSize; k++) {
         int prev = bits & ~(1 << subset[k]);
 
@@ -118,6 +120,7 @@ void fillC (rec * x, fillCData data) {
         data.C[bits][1][subset[k]] = res[1];
     }
     // printf("%d\n", omp_get_thread_num());
+    // print_subset(subset, data.subsetSize);
     free(subset);
 }
      
@@ -158,9 +161,9 @@ int TSP(int n, int *dist, int *path)
     
     cudaMemcpy(d_input_data, dist, data_size * sizeof(int), cudaMemcpyHostToDevice);
     
-    int threadsPerBlock = data_size;
-    int grid_size = 1;
-    process_data<<<grid_size, threadsPerBlock>>>(d_input_data, data_size);
+    int threadsPerBlock = 128;
+    int gridSize = (threadsPerBlock + data_size - 1) / threadsPerBlock;
+    process_data<<<gridSize, threadsPerBlock>>>(d_input_data, data_size);
 
     int dimension0C = myPow(2, n) - 1;
     int CSize = dimension0C * n * 2;
