@@ -1,2 +1,6 @@
+# Kompilacja
 nvcc -Xcompiler -fopenmp -o program TSPParallel.cu
 ./program 10 adjPascal
+
+# Link do opisu
+http://pw20we.cs.put.poznan.pl/doku.php?id=pr23:s148082:s148082
